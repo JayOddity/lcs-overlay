@@ -1,0 +1,557 @@
+<title>Last Club Standing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Barlow:wght@400;500;600&display=swap">
+<style>
+  /* One look on purpose: a capture surface for chroma key. Nothing on the
+     overlay uses a green or blue hue, so the keyer only removes the ground. */
+  :root {
+    color-scheme: dark;
+    --key: #00b140;
+    --board: #16181c;
+    --board-2: #22252b;
+    --edge: #33373f;
+    --tile: #fbfbf8;
+    --tile-edge: #cfd2cc;
+    --ink: #131416;
+    --red: #d0202f;
+    --red-dk: #5c1017;
+    --bulb: #ffd24a;
+    --muted: #9ba1a9;
+    --text: #eef0f2;
+    --display: "Barlow Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "Barlow", "Helvetica Neue", Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; margin: 0; overflow: hidden; }
+  body { background: var(--key); color: var(--text); font: 15px/1.45 var(--body); }
+  body.bg-blue { background: #0047bb; }
+  body.bg-clear { background: transparent; }
+  /* See-through panels only in OBS mode: a semi-transparent panel on green would key badly */
+  body.bg-clear .bag, body.bg-clear .pop { opacity: var(--see, 1); }
+  body.idle { cursor: none; }
+
+  /* 1920×1080 stage, scaled to the window, so a full-window capture lines up 1:1 with game footage */
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: 0 0; }
+
+  /* ---------- Bag panel ---------- */
+  .bag {
+    position: absolute; top: 50%; left: 20px; width: 300px; transform: translateY(-50%) scale(.8); transform-origin: left center;
+    background: var(--board); border: 2px solid var(--edge); border-radius: 4px;
+    padding: 18px; display: grid; gap: 14px;
+  }
+  body.side-right .bag { left: auto; right: 20px; transform-origin: right center; }
+  .bag-head { display: flex; justify-content: space-between; align-items: end; gap: 12px; }
+  .title { font: 800 30px/.95 var(--display); letter-spacing: .04em; text-transform: uppercase; }
+  .count { display: grid; justify-items: end; gap: 6px; }
+  .lbl { font: 700 14px/1 var(--display); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+  .num {
+    font: 800 64px/1 var(--display); font-variant-numeric: tabular-nums; color: var(--red);
+    background: var(--tile); min-width: 84px; padding: 6px 10px; text-align: center;
+    border-radius: 2px; box-shadow: inset 0 -3px 0 var(--tile-edge);
+  }
+  .num.bump { animation: bump .5s ease-out; }
+  @keyframes bump { 30% { transform: scale(1.12); } }
+
+  .rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  .row {
+    position: relative; height: 46px; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    background: var(--tile); color: var(--ink); border-radius: 2px; padding-inline: 14px;
+    box-shadow: inset 0 -2px 0 var(--tile-edge); cursor: pointer; user-select: none;
+  }
+  .name { position: relative; font: 700 30px/1 var(--display); text-transform: uppercase; letter-spacing: .02em; white-space: nowrap; }
+  .name::after {
+    content: ""; position: absolute; left: -4px; top: 52%; height: 4px; width: 0;
+    background: var(--red); transition: width .45s cubic-bezier(.2,.7,.2,1);
+  }
+  .tag { font: 800 15px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; }
+  .row.out { background: var(--board-2); box-shadow: none; color: #6d727b; }
+  .row.out .name::after { width: calc(100% + 8px); }
+  .row.out .tag { color: #fff; background: var(--red); padding: 6px 8px 5px; border-radius: 2px; }
+  .row.just { animation: hit .9s ease-out; }
+  @keyframes hit { 0% { background: var(--red); color: #fff; transform: translateX(-10px); } 25% { transform: translateX(6px); } 45% { transform: none; } 100% { background: var(--board-2); } }
+  .row.immune { background: var(--board-2); box-shadow: none; color: var(--text); cursor: default; margin-top: 6px; }
+  .row.immune .tag { color: var(--bulb); }
+  .empty-note { font: 700 20px/1.2 var(--display); letter-spacing: .08em; text-transform: uppercase; color: var(--bulb); text-align: center; margin: 0; }
+
+  /* ---------- Deletion drum ---------- */
+  .pop { position: absolute; left: 50%; top: 50%; width: 860px; transform: translate(-50%, -50%); }
+  body.side-right .pop { left: calc(50% - 160px); }
+  body.side-left .pop { left: calc(50% + 160px); }
+  .pop-card { background: var(--board); border: 2px solid var(--edge); border-radius: 4px; padding: 20px; display: grid; gap: 14px; }
+  .pop.show { animation: popin .35s cubic-bezier(.2,.9,.3,1.2); }
+  @keyframes popin { from { transform: translate(-50%, -50%) scale(.85); opacity: 0; } }
+  .pop-head { display: flex; justify-content: space-between; align-items: baseline; }
+  .pop-head b { font: 800 40px/1 var(--display); letter-spacing: .04em; text-transform: uppercase; color: var(--red); }
+  .pop-head span { font: 700 20px/1 var(--display); letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+
+  .wheel { display: grid; grid-template-columns: 20px minmax(0, 1fr) 20px; gap: 10px; align-items: stretch; }
+  .rail { display: flex; flex-direction: column; justify-content: space-between; align-items: center; padding-block: 6px; }
+  .bulb { width: 12px; height: 12px; border-radius: 50%; background: #5a4a18; }
+  .wheel.spinning .bulb { animation: chase .36s steps(1) infinite; }
+  .wheel.spinning .bulb:nth-child(3n+2) { animation-delay: .12s; }
+  .wheel.spinning .bulb:nth-child(3n+3) { animation-delay: .24s; }
+  .wheel.won .bulb { background: var(--bulb); }
+  @keyframes chase { 0% { background: var(--bulb); } 33% { background: #5a4a18; } }
+  .reel { --face-h: 130px; position: relative; height: calc(var(--face-h) * 3.1); perspective: 1100px; overflow: hidden; border-radius: 2px; background: #0d0e10; }
+  .drum { position: absolute; inset: 0; transform-style: preserve-3d; }
+  .face {
+    position: absolute; left: 0; right: 0; top: 50%; height: var(--face-h); margin-top: calc(var(--face-h) / -2);
+    backface-visibility: hidden; display: flex; align-items: center; justify-content: center;
+    background: var(--tile); color: var(--ink); border-top: 2px solid var(--tile-edge); padding-inline: 12px;
+  }
+  .face.alt { background: #eceae4; }
+  .face span { font: 800 calc(var(--face-h) * .62)/1 var(--display); text-transform: uppercase; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .face.win span { color: var(--red); }
+  .shade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to bottom, rgba(13,14,16,.88), rgba(13,14,16,.15) 32%, transparent 40%, transparent 60%, rgba(13,14,16,.15) 68%, rgba(13,14,16,.88)); }
+  .window { position: absolute; left: 0; right: 0; top: 50%; height: var(--face-h); margin-top: calc(var(--face-h) / -2); border-top: 3px solid var(--red); border-bottom: 3px solid var(--red); pointer-events: none; }
+  .ptr { position: absolute; top: 50%; width: 0; height: 0; margin-top: -14px; border-top: 14px solid transparent; border-bottom: 14px solid transparent; pointer-events: none; z-index: 2; }
+  .ptr.l { left: 0; border-left: 20px solid var(--red); }
+  .ptr.r { right: 0; border-right: 20px solid var(--red); transform-origin: 100% 50%; }
+  .wheel.won .window { animation: flash .5s ease-out 2; }
+  @keyframes flash { 50% { background: rgba(208,32,47,.2); } }
+
+  /* ---------- Controls: fade out when the mouse is still ---------- */
+  .dock {
+    position: absolute; left: 50%; bottom: 36px; transform: translateX(-50%);
+    display: flex; gap: 8px; align-items: center; background: var(--board); border: 2px solid var(--edge);
+    border-radius: 4px; padding: 10px; transition: opacity .25s;
+  }
+  body.idle .dock { opacity: 0; pointer-events: none; }
+  .btn {
+    font: 700 20px/1 var(--display); letter-spacing: .1em; text-transform: uppercase;
+    background: transparent; color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 12px 16px; cursor: pointer;
+  }
+  .btn:hover { border-color: var(--muted); }
+  .btn.primary { background: var(--red); border-color: var(--red); color: #fff; }
+  .btn.armed { border-color: var(--red); color: #ffb3b9; }
+  .btn kbd { font: 600 13px/1 var(--body); opacity: .75; margin-left: 8px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--bulb); outline-offset: 2px; }
+
+  .sheet {
+    position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 760px;
+    background: var(--board); border: 2px solid var(--edge); border-radius: 4px; padding: 24px; display: grid; gap: 20px; font-size: 17px;
+  }
+  .sheet h3 { font: 700 16px/1 var(--display); letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0; }
+  .sheet .head { display: flex; justify-content: space-between; align-items: center; }
+  .picker { display: grid; gap: 8px; }
+  .prow { display: grid; grid-template-columns: 90px 1fr; gap: 8px; align-items: start; }
+  .prow > span { font: 700 15px/32px var(--display); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .pchips { display: flex; flex-wrap: wrap; gap: 5px; }
+  .pchip { font: 600 16px/1 var(--body); color: var(--muted); background: transparent; border: 1px solid var(--edge); border-radius: 3px; padding: 8px 10px; cursor: pointer; min-width: 46px; }
+  .pchip[aria-pressed="true"] { background: var(--tile); color: var(--ink); border-color: var(--tile); }
+  .opts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 24px; }
+  .opts label { display: grid; gap: 6px; color: var(--muted); }
+  .opts select { font: 500 17px/1.2 var(--body); color: var(--text); background: var(--board-2); border: 1px solid var(--edge); border-radius: 3px; padding: 8px 10px; }
+  .opts input[type="range"] { accent-color: var(--red); }
+  .check { display: flex; gap: 10px; align-items: center; color: var(--text); }
+  .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--red); }
+  .note { font-size: 15px; color: var(--muted); margin: 0; }
+  .keys { font-size: 15px; color: var(--muted); margin: 0; }
+  .keys kbd { font: 600 13px/1 var(--body); color: var(--text); border: 1px solid var(--edge); border-radius: 3px; padding: 3px 6px; }
+
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div id="stage">
+  <aside class="bag" aria-label="Clubs in the bag">
+    <div class="bag-head">
+      <div class="title">Last Club<br>Standing</div>
+      <div class="count"><span class="lbl">Clubs left</span><span class="num" id="left">13</span></div>
+    </div>
+    <ol class="rows" id="rows"></ol>
+    <p class="empty-note" id="emptyNote" hidden>Bag empty · putter only</p>
+  </aside>
+
+  <div class="pop" id="pop" hidden>
+    <div class="pop-card">
+      <div class="pop-head"><b>Par or worse</b><span>One club goes</span></div>
+      <div id="wheel"></div>
+    </div>
+  </div>
+
+  <div class="dock" id="dock">
+    <button class="btn primary" id="delBtn">Delete a club<kbd>Space</kbd></button>
+    <button class="btn" id="undoBtn">Undo<kbd>Z</kbd></button>
+    <button class="btn" id="resetBtn">New round<kbd>R</kbd></button>
+    <button class="btn" id="setBtn">Settings<kbd>S</kbd></button>
+  </div>
+
+  <div class="sheet" id="sheet" hidden>
+    <div class="head"><h3 id="bagCount">Your bag</h3><button class="btn" id="closeBtn">Done</button></div>
+    <div id="bagPicker" class="picker"></div>
+    <div class="opts">
+      <label for="optSide">Bag panel
+        <select id="optSide"><option value="left">Left edge</option><option value="right">Right edge</option></select>
+      </label>
+      <label for="optBg">Background
+        <select id="optBg"><option value="green">Green screen</option><option value="blue">Blue screen</option><option value="clear">Transparent (OBS browser source)</option></select>
+      </label>
+      <label for="optSpeed">Spin length
+        <select id="optSpeed"><option value="1800">Quick · 2 s</option><option value="3600">Show · 3.5 s</option><option value="5500">Big Wheel · 5.5 s</option></select>
+      </label>
+      <label for="optOpacity" id="opacityRow">Overlay opacity · <span id="opOut">85%</span>
+        <input type="range" id="optOpacity" min="30" max="100" step="5">
+      </label>
+      <label for="optVolume">Volume · <span id="volOut">80%</span>
+        <input type="range" id="optVolume" min="0" max="100" step="5">
+      </label>
+    </div>
+    <label class="check" for="optImmune"><input type="checkbox" id="optImmune"> <span>Putter is immune (can't be deleted)</span></label>
+    <p class="note">Click a club in the bag to strike it out or bring it back by hand. The round is saved in this browser, so a refresh keeps it.</p>
+    <p class="keys"><kbd>Space</kbd> delete a club · <kbd>Z</kbd> undo · <kbd>R</kbd> twice for a new round · <kbd>S</kbd> settings · <kbd>M</kbd> sound on/off</p>
+  </div>
+</div>
+
+<script>
+(() => {
+  // Club names as PGA Tour 2K25 names them (same list as the club randomiser)
+  const CLUBS = [];
+  const add = (id, name, group, chip) => CLUBS.push({ id, name, group, chip });
+  add('DR', 'Driver', 'Driver', 'Driver');
+  for (let n = 2; n <= 7; n++) add(n + 'W', n + ' Wood', 'Woods', n + 'W');
+  for (let n = 2; n <= 7; n++) add(n + 'H', n + ' Hybrid', 'Hybrids', n + 'H');
+  for (let n = 1; n <= 9; n++) add(n + 'I', n + ' Iron', 'Irons', n + 'i');
+  add('PW', 'Pitching Wedge', 'Wedges', 'PW');
+  add('GW', 'Gap Wedge', 'Wedges', 'GW');
+  add('SW', 'Sand Wedge', 'Wedges', 'SW');
+  add('LW', 'Lob Wedge', 'Wedges', 'LW');
+  for (let d = 48; d <= 64; d += 2) add('W' + d, d + '° Wedge', 'Wedges', d + '°');
+  add('PT', 'Putter', 'Putter', 'Putter');
+  const CLUB = Object.fromEntries(CLUBS.map((c) => [c.id, c]));
+  const GROUPS = ['Driver', 'Woods', 'Hybrids', 'Irons', 'Wedges', 'Putter'];
+  const DEFAULT_BAG = ['DR', '3W', '5W', '4H', '5I', '6I', '7I', '8I', '9I', 'PW', 'GW', 'SW', 'W62', 'PT'];
+  const KEY = 'lcs-overlay-v2';
+
+  const fresh = () => ({ bag: DEFAULT_BAG.slice(), out: [], opts: { side: 'left', bg: 'green', putterImmune: true, opacity: 0.85, speed: 3600, sound: true, volume: 0.8 } });
+  let S = fresh();
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || 'null');
+    if (saved && Array.isArray(saved.bag)) { S = Object.assign(fresh(), saved); S.opts = Object.assign(fresh().opts, saved.opts || {}); }
+  } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  const $ = (id) => document.getElementById(id);
+  const reduced = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function rint(n) {
+    if (window.crypto && crypto.getRandomValues) {
+      const a = new Uint32Array(1), lim = Math.floor(0x100000000 / n) * n;
+      do { crypto.getRandomValues(a); } while (a[0] >= lim);
+      return a[0] % n;
+    }
+    return Math.floor(Math.random() * n);
+  }
+  const pick = (arr) => arr[rint(arr.length)];
+  const bagClubs = () => CLUBS.filter((c) => S.bag.includes(c.id));
+  const immune = (c) => c.id === 'PT' && S.opts.putterImmune;
+  const alive = () => bagClubs().filter((c) => !immune(c) && !S.out.includes(c.id));
+
+  // ---------- Stage scaling ----------
+  function fit() {
+    // Scale to the window height and stretch the stage to the window width,
+    // so the bag panel sits against the real window edge at any aspect ratio.
+    const s = innerHeight / 1080;
+    const st = $('stage');
+    st.style.width = Math.max(1200, innerWidth / s) + 'px';
+    st.style.transform = 'scale(' + s + ') translate(-50%, -50%)';
+  }
+  addEventListener('resize', fit);
+
+  // ---------- Sound ----------
+  let actx = null, lastTick = 0, noise = null;
+  function audio() {
+    if (!S.opts.sound) return null;
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      if (!noise) {
+        const len = Math.floor(actx.sampleRate * 0.03);
+        noise = actx.createBuffer(1, len, actx.sampleRate);
+        const d = noise.getChannelData(0);
+        for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3);
+      }
+      return actx;
+    } catch (e) { return null; }
+  }
+  function clack() {
+    const a = audio(); if (!a) return;
+    const now = a.currentTime;
+    if (now - lastTick < 0.028) return;
+    lastTick = now;
+    const src = a.createBufferSource(); src.buffer = noise;
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 1.2;
+    const g = a.createGain(); g.gain.value = 0.9 * S.opts.volume;
+    src.connect(bp).connect(g).connect(a.destination);
+    src.start(now);
+  }
+  function ding() {
+    const a = audio(); if (!a) return;
+    const now = a.currentTime;
+    [[988, 0], [1319, 0.12]].forEach(([f, t]) => {
+      const o = a.createOscillator(), g = a.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, now + t);
+      g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.25 * S.opts.volume), now + t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + t + 0.6);
+      o.connect(g).connect(a.destination);
+      o.start(now + t); o.stop(now + t + 0.65);
+    });
+  }
+  // Low falling hit when the club is struck out
+  function thud() {
+    const a = audio(); if (!a) return;
+    const now = a.currentTime;
+    const o = a.createOscillator(), g = a.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(180, now);
+    o.frequency.exponentialRampToValueAtTime(55, now + 0.4);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, 0.6 * S.opts.volume), now + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+    o.connect(g).connect(a.destination);
+    o.start(now); o.stop(now + 0.55);
+  }
+
+  // ---------- Reel (same drum as the club randomiser) ----------
+  class Reel {
+    constructor(host, faces = 12) {
+      this.F = faces; this.step = 360 / faces; this.ang = 0; this.busy = false;
+      this.wheel = host;
+      const bulbs = '<span class="bulb"></span>'.repeat(9);
+      host.classList.add('wheel');
+      host.innerHTML = '<div class="rail">' + bulbs + '</div><div class="reel"><div class="drum"></div><div class="shade"></div><div class="window"></div><span class="ptr l"></span><span class="ptr r"></span></div><div class="rail">' + bulbs + '</div>';
+      this.el = host.querySelector('.reel');
+      this.drum = host.querySelector('.drum');
+      this.ptr = host.querySelector('.ptr.r');
+      this.faces = [];
+      for (let i = 0; i < faces; i++) {
+        const f = document.createElement('div');
+        f.className = 'face' + (i % 2 ? ' alt' : '');
+        f.innerHTML = '<span></span>';
+        this.drum.appendChild(f);
+        this.faces.push({ el: f, span: f.firstChild, fresh: true });
+      }
+    }
+    layout() {
+      const h = this.faces[0].el.offsetHeight || 130;
+      this.r = h / (2 * Math.tan(Math.PI / this.F));
+      this.faces.forEach((f, i) => { f.el.style.transform = 'rotateX(' + (-i * this.step) + 'deg) translateZ(' + this.r + 'px)'; });
+      this.apply();
+    }
+    apply() { this.drum.style.transform = 'translateZ(' + (-this.r) + 'px) rotateX(' + this.ang + 'deg)'; }
+    front() { return ((Math.round(this.ang / this.step) % this.F) + this.F) % this.F; }
+    offset(i) { const o = (this.ang - i * this.step) % 360; return ((o + 540) % 360) - 180; }
+    plan(names, anchor, label) {
+      const F = this.F, lab = new Array(F).fill(null);
+      lab[anchor] = label;
+      let others = [...new Set(names)].filter((n) => n !== label);
+      if (!others.length) others = [label];
+      for (let i = others.length - 1; i > 0; i--) { const j = rint(i + 1); [others[i], others[j]] = [others[j], others[i]]; }
+      const used = new Map();
+      for (let k = 1; k < F; k++) {
+        const i = (anchor + k) % F;
+        const near = new Set();
+        for (let d = 1; d <= 4; d++) { near.add(lab[(i + d) % F]); near.add(lab[(i - d + F) % F]); }
+        let c = others.filter((n) => !near.has(n));
+        if (!c.length) c = others.filter((n) => n !== lab[(i + 1) % F] && n !== lab[(i - 1 + F) % F]);
+        if (!c.length) c = others;
+        const min = Math.min(...c.map((n) => used.get(n) || 0));
+        const n = c.find((x) => (used.get(x) || 0) === min);
+        lab[i] = n; used.set(n, (used.get(n) || 0) + 1);
+      }
+      return lab;
+    }
+    fill(names, frontLabel) {
+      const lab = this.plan(names, this.front(), frontLabel);
+      this.faces.forEach((f, i) => { f.span.textContent = lab[i]; f.fresh = true; f.el.classList.remove('win'); });
+      this.wheel.classList.remove('won');
+    }
+    spin(names, result, ms, done) {
+      this.busy = true;
+      this.wheel.classList.remove('won');
+      this.faces.forEach((f) => { f.fresh = false; f.el.classList.remove('win'); });
+      const d = 5 + rint(3);
+      const target = (this.front() + d) % this.F;
+      const labels = this.plan(names, target, result);
+      this.faces[target].span.textContent = result;
+      this.faces[target].fresh = true;
+      const start = Math.round(this.ang / this.step) * this.step;
+      const turns = ms < 2500 ? 1 : ms < 4500 ? 2 : 3;
+      const end = start + turns * 360 + d * this.step;
+      const land = () => {
+        this.ang = end; this.apply();
+        this.faces[target].el.classList.add('win');
+        this.wheel.classList.remove('spinning');
+        this.wheel.classList.add('won');
+        this.busy = false;
+        ding();
+        done && done();
+      };
+      if (reduced) { this.faces.forEach((f, i) => { f.span.textContent = labels[i]; }); land(); return; }
+      this.wheel.classList.add('spinning');
+      let seg = Math.round(start / this.step);
+      const t0 = performance.now();
+      const frame = (now) => {
+        const p = Math.min(1, (now - t0) / ms);
+        const e = 1 - Math.pow(1 - p, 4);
+        this.ang = start + (end - start) * e;
+        this.apply();
+        this.faces.forEach((f, i) => { if (!f.fresh && Math.abs(this.offset(i)) > 100) { f.span.textContent = labels[i]; f.fresh = true; } });
+        const k = Math.round(this.ang / this.step);
+        if (k !== seg) {
+          seg = k; clack();
+          if (this.ptr.animate) this.ptr.animate([{ transform: 'rotate(-28deg)' }, { transform: 'rotate(0deg)' }], { duration: 90 });
+        }
+        if (p < 1) requestAnimationFrame(frame); else land();
+      };
+      requestAnimationFrame(frame);
+    }
+  }
+  const wheel = new Reel($('wheel'));
+
+  // ---------- Bag panel ----------
+  function renderRows(justId) {
+    const list = bagClubs();
+    $('rows').innerHTML = list.map((c) => {
+      const imm = immune(c), out = S.out.includes(c.id);
+      const cls = 'row' + (imm ? ' immune' : '') + (out ? ' out' : '') + (c.id === justId ? ' just' : '');
+      const tag = imm ? 'Immune' : out ? 'Out' : '';
+      return '<li class="' + cls + '" data-id="' + c.id + '"><span class="name">' + c.name + '</span><span class="tag">' + tag + '</span></li>';
+    }).join('');
+    const n = alive().length;
+    const el = $('left');
+    if (el.textContent !== String(n)) { el.textContent = n; el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+    $('emptyNote').textContent = S.opts.putterImmune && S.bag.includes('PT') ? 'Bag empty · putter only' : 'Bag empty';
+    $('emptyNote').hidden = n > 0 || !list.some((c) => !immune(c));
+  }
+  $('rows').addEventListener('click', (e) => {
+    const li = e.target.closest('.row');
+    if (!li || busy || li.classList.contains('immune')) return;
+    const id = li.dataset.id, i = S.out.indexOf(id);
+    if (i >= 0) S.out.splice(i, 1); else { S.out.push(id); thud(); }
+    save(); renderRows(i >= 0 ? null : id);
+  });
+
+  // ---------- Delete a random club ----------
+  let busy = false;
+  function deleteOne() {
+    if (busy || !$('sheet').hidden) return;
+    const pool = alive();
+    if (!pool.length) return;
+    busy = true;
+    const r = pick(pool), names = pool.map((c) => c.name);
+    const pop = $('pop');
+    pop.hidden = false; pop.classList.remove('show'); void pop.offsetWidth; pop.classList.add('show');
+    wheel.layout();
+    const finish = () => setTimeout(() => {
+      pop.hidden = true;
+      S.out.push(r.id); save();
+      renderRows(r.id); thud();
+      busy = false;
+    }, 1600);
+    if (pool.length === 1) {
+      wheel.fill(names, r.name);
+      wheel.faces[wheel.front()].el.classList.add('win');
+      wheel.wheel.classList.add('won');
+      ding(); finish();
+      return;
+    }
+    wheel.fill(names, pick(names));
+    wheel.spin(names, r.name, S.opts.speed, finish);
+  }
+  function undo() {
+    if (busy || !S.out.length) return;
+    S.out.pop(); save(); renderRows();
+  }
+  let armTimer = null;
+  function reset() {
+    if (busy) return;
+    const b = $('resetBtn');
+    if (!b.classList.contains('armed')) {
+      b.classList.add('armed'); b.firstChild.textContent = 'Press again';
+      clearTimeout(armTimer);
+      armTimer = setTimeout(() => { b.classList.remove('armed'); b.firstChild.textContent = 'New round'; }, 2500);
+      return;
+    }
+    clearTimeout(armTimer);
+    b.classList.remove('armed'); b.firstChild.textContent = 'New round';
+    S.out = []; save(); renderRows();
+  }
+
+  // ---------- Settings ----------
+  function renderBag() {
+    $('bagPicker').innerHTML = GROUPS.map((g) =>
+      '<div class="prow"><span>' + g + '</span><div class="pchips">' +
+      CLUBS.filter((c) => c.group === g).map((c) =>
+        '<button class="pchip" id="club-' + c.id + '" data-id="' + c.id + '" title="' + c.name + '" aria-pressed="' + S.bag.includes(c.id) + '">' + c.chip + '</button>').join('') +
+      '</div></div>').join('');
+    const n = S.bag.length;
+    $('bagCount').textContent = 'Your bag · ' + n + ' of 14' + (n > 14 ? ' (too many)' : '');
+  }
+  $('bagPicker').addEventListener('click', (e) => {
+    const b = e.target.closest('.pchip'); if (!b) return;
+    const id = b.dataset.id, i = S.bag.indexOf(id);
+    if (i >= 0) S.bag.splice(i, 1); else S.bag.push(id);
+    S.out = S.out.filter((x) => S.bag.includes(x));
+    save(); renderBag(); renderRows();
+  });
+  function applyOpts() {
+    document.body.classList.toggle('side-left', S.opts.side === 'left');
+    document.body.classList.toggle('side-right', S.opts.side !== 'left');
+    document.body.classList.toggle('bg-blue', S.opts.bg === 'blue');
+    document.body.classList.toggle('bg-clear', S.opts.bg === 'clear');
+    $('optImmune').checked = S.opts.putterImmune;
+    document.documentElement.style.setProperty('--see', S.opts.opacity);
+    $('opacityRow').hidden = S.opts.bg !== 'clear';
+    $('optOpacity').value = String(Math.round(S.opts.opacity * 100));
+    $('opOut').textContent = Math.round(S.opts.opacity * 100) + '%';
+    $('optSide').value = S.opts.side; $('optBg').value = S.opts.bg; $('optSpeed').value = String(S.opts.speed);
+    $('optVolume').value = String(Math.round(S.opts.volume * 100));
+    $('volOut').textContent = Math.round(S.opts.volume * 100) + '%';
+  }
+  $('optImmune').addEventListener('change', (e) => {
+    S.opts.putterImmune = e.target.checked;
+    if (S.opts.putterImmune) S.out = S.out.filter((x) => x !== 'PT');
+    save(); renderRows();
+  });
+  $('optOpacity').addEventListener('input', (e) => { S.opts.opacity = Number(e.target.value) / 100; save(); applyOpts(); });
+  $('optSide').addEventListener('change', (e) => { S.opts.side = e.target.value; save(); applyOpts(); });
+  $('optBg').addEventListener('change', (e) => { S.opts.bg = e.target.value; save(); applyOpts(); });
+  $('optSpeed').addEventListener('change', (e) => { S.opts.speed = Number(e.target.value) || 3600; save(); });
+  $('optVolume').addEventListener('input', (e) => { S.opts.volume = Number(e.target.value) / 100; $('volOut').textContent = e.target.value + '%'; save(); });
+  $('optVolume').addEventListener('change', () => { if (S.opts.volume > 0) ding(); });
+  const toggleSheet = (open) => { if (busy) return; $('sheet').hidden = !open; if (open) renderBag(); };
+
+  // ---------- Controls hide when the mouse is still ----------
+  let idleTimer = null;
+  function wakeUi() {
+    document.body.classList.remove('idle');
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { if ($('sheet').hidden && !$('dock').matches(':hover')) document.body.classList.add('idle'); }, 2500);
+  }
+  addEventListener('mousemove', wakeUi);
+
+  // ---------- Wire up ----------
+  const tap = (id, fn) => $(id).addEventListener('click', (e) => { e.currentTarget.blur(); fn(); });
+  tap('delBtn', deleteOne);
+  tap('undoBtn', undo);
+  tap('resetBtn', reset);
+  tap('setBtn', () => toggleSheet(true));
+  tap('closeBtn', () => toggleSheet(false));
+  document.addEventListener('keydown', (e) => {
+    const tag = (e.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'select' || e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key.toLowerCase();
+    if (k === ' ') { e.preventDefault(); deleteOne(); }
+    else if (k === 'z') undo();
+    else if (k === 'r') reset();
+    else if (k === 's') toggleSheet($('sheet').hidden);
+    else if (k === 'escape') toggleSheet(false);
+    else if (k === 'm') { S.opts.sound = !S.opts.sound; save(); }
+  });
+
+  // ---------- Start ----------
+  applyOpts(); fit(); renderRows(); wakeUi();
+})();
+</script>
